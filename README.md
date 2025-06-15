@@ -1,10 +1,10 @@
 # PadonskiYYazik for **[Exteragram](https://exteragram.app/)**
 
-
-
 ## ПРЕВЕД, ЧЕЛОВЕГ!
 
 Ты нашол плагин, который превратит твой унылый Exteragram в настоящий филиал udaff.com. Забудь про скучные и правильные тексты. С этим плагином каждое твое сообщение будет кричать и жжеч!
+![image](https://github.com/user-attachments/assets/f36c4c99-1f10-4337-ad1f-b821d6177bb3)
+
 
 ## Фичи (Чем мы жжом)
 
