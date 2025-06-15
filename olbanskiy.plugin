@@ -1,0 +1,334 @@
+from base_plugin import BasePlugin, HookResult, HookStrategy, MenuItemData, MenuItemType
+from ui.settings import Header, Divider, Switch, Selector, Text
+from ui.bulletin import BulletinHelper
+from android_utils import run_on_ui_thread
+from client_utils import get_messages_controller, get_last_fragment
+from org.telegram.messenger import AndroidUtilities
+from com.exteragram.messenger.plugins import PluginsController
+from com.exteragram.messenger.plugins.ui import PluginSettingsActivity
+
+from java.util import Locale
+import traceback
+import random
+import re
+
+__name__ = "PadonskiYYazik"
+__description__ = "Делает ваши мессаги па-настаящему падонкафскими! Аффтар, жги ищо! (Идею украл)"
+__icon__ = "chats_archive"
+__version__ = "0.6.9"
+__id__ = "padonskiy_yazik"
+__author__ = "@ffs_tmp_info"
+__min_version__ = "0.6.9"
+
+
+class LocalizationManager:
+    def __init__(self):
+        self.language = "ru"
+
+    def get_string(self, string_key):
+        return self.strings[self.language].get(string_key, self.strings["en"].get(string_key, string_key))
+
+    strings = {
+        "ru": {
+            "ENABLED": "✅ АЦЦКЕЙ РЕЖЫМ ФКЛЮЧОН! ЖГИ!",
+            "DISABLED": "❌ ПЛАГЕН В БОБРУЙСКЕ, ЖЫВОТНОЕ!",
+            "SETTINGS_HEADER": "Ностройке Падонка",
+            "ENABLE_SWITCH": "Фключить падонкаффский",
+            "IGNORE_DOT_COMMANDS_SWITCH": "Игнариравать каманды (.)",
+            "IGNORE_DOT_COMMANDS_INFO": "Ни минять мессаги с точкой. Нужна для савмистимасти.",
+            "PADONKIZM_INTENSITY": "Уровень падонкаффства",
+            "INTENSITY_LOW": "Лайт (25%)",
+            "INTENSITY_MEDIUM": "Норм (50%)",
+            "INTENSITY_HIGH": "Аццкий (75%)",
+            "INTENSITY_MAX": "Убейся апстену (100%)",
+            "INFO_TEXT": "Превращает твой унылый текст в могучий олбанский йазыг! Ржунимагу!",
+            "ADVANCED_SETTINGS_HEADER": "Дапалнительные фишки",
+            "ENABLE_CAPS_LOCK_SWITCH": "ВКЛЮЧИТЬ КАПС!!!!11",
+            "CAPS_LOCK_INFO": "ВСЕ БУКВЫ БУДУТ БАЛЬШИМИ, КАК У НАСТОЯЩЕГО ПАДОНКА!",
+            "REPLACE_PUNCTUATION_SWITCH": "Каверкать знаки препинания",
+            "REPLACE_PUNCTUATION_INFO": "Точки и запятые заменяюцца на скобощки )))) или !!!1",
+            "ADD_ACTIONS_SWITCH": "Добавлять действия падонка",
+            "ACTIONS_FREQUENCY": "Чостота действий",
+            "ACTIONS_INFO": "Добавляет в конце фразы типа *ржот* или *ушол ф бабруйск*.",
+            "ERROR_MESSAGE_PADONOK": "ЙА КРИВОРУКОЕ ЧМО, НИАСИЛИЛ! Ω/ Вот оригинал:",
+            "DONATE_HEADER": "Заслать аффтарам на пево",
+            "DONATE_CRYPTO": "Крипта кашелек",
+            "DONATE_INFO": "Другая инфа и реквизиты",
+            "SHOW_SETTINGS_BUTTONS": "Кнопка настроек в меню",
+            "SHOW_SETTINGS_BUTTONS_DESC": "Добавляет кнопку открытия настроек плагина в меню",
+            "CURSING_LEVEL": "Уровень мата",
+            "CURSING_LEVEL_INFO": "Дабавляет в текст немного грязи для атмасферы.",
+            "CURSE_NONE": "Нинада",
+            "CURSE_LOW": "Па чуть-чуть",
+            "CURSE_HIGH": "АЦЦКИЙ",
+            "WORD_GLUE_SWITCH": "Склеивать слова",
+            "WORD_GLUE_INFO": "Кароткие слова типа 'в', 'на', 'с' будут приклеивацца к следующему.",
+            "BRUTALITY_LEVEL": "Уровень жести",
+            "BRUTALITY_INFO": "Включает аццкие мутации слов: перестановку букв, Zalgo-эффект и прочую дичь.",
+            "BRUTALITY_NONE": "Па-божески",
+            "BRUTALITY_MEDIUM": "Аццкий угар",
+            "BRUTALITY_HIGH": "КРОВЬ КИШКИ РАСПОЛОСОВАЛО"
+        },
+        "en": {}
+    }
+
+
+locali = LocalizationManager()
+
+
+class PadonkiPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__()
+        self._drawer_settings_item = None
+        self._chat_settings_item = None
+        self.padonki_replacements = {r'\bя\b': 'йа', r'\bавтор\b': 'аффтар', r'\bпривет\b': 'превед',
+                                     r'\bкак дела\b': 'кагдила', r'\bчто\b': 'чо', r'\bеще\b': 'ищо', r'\bещё\b': 'ищо',
+                                     r'\bсейчас\b': 'щаз', r'\bвообще\b': 'вапще', r'\bничего\b': 'ничо',
+                                     r'\bхорошо\b': 'харашо', r'\bтебя\b': 'тибя', r'\bсебя\b': 'сибя',
+                                     r'\bфото\b': 'фоты', r'\bфотография\b': 'фотачка', r'\bкрасавчик\b': 'кросавчег',
+                                     r'\bдевушка\b': 'тиолко', r'\bпарень\b': 'пасан', r'\bсмешно\b': 'ржунимагу',
+                                     r'\bсмеюсь\b': 'ржу', r'\bмедведь\b': 'медвед', r'\bкреветка\b': 'криведко',
+                                     r'\bработа\b': 'робота', r'\bзачем\b': 'нахуа', r'\bпожалуйста\b': 'пажалусто',
+                                     r'\bспасибо\b': 'спосибо', r'\bденьги\b': 'бабло', r'\bинтернет\b': 'интырнет',
+                                     r'\bсмотреть\b': 'зырить', r'\bчеловек\b': 'челавег', r'\bотлично\b': 'зачот',
+                                     r'\bкруто\b': 'аццки', r'\bстатья\b': 'креатиф', r'\bсообщение\b': 'камент',
+                                     r'\bкомментарий\b': 'камент', r'\bучи\b': 'учи', r'\bалбанский\b': 'олбанскей',
+                                     r'\bстарый\b': 'байан', r'\bбаян\b': 'байан', r'\bубей себя\b': 'убейся ап стену',
+                                     r'\bубейся\b': 'убейся', r'\bблог\b': 'бгог', r'\bв бобруйск\b': 'ф бабруйск',
+                                     r'\bживотное\b': 'жывотное', r'\bздравствуй\b': 'дратути',
+                                     r'\bдо свидания\b': 'дасвиданиня', r'\bочень\b': 'очинь', r'\bпочему\b': 'пачиму',
+                                     r'\bкомпьютер\b': 'кампутер'}
+        self.padonki_actions = ["*ржот*", "*ушол ф бабруйск, жывотное!*", "*убилси апстену*", "*лежит пацталом*",
+                                "*жжот*", "*пейсши исчо*", "*выпей йаду*", "*бьёцца галавой ап клаву*", "аффтар жги!",
+                                "учаснегЕ в шоке", "кг/ам", "ржунимагу", "аццкий сотона", "йа криведко",
+                                "учи албанский!", "гори в аду"]
+        self.bad_words = ["бля", "нахуй", "сука", "ебать", "пиздец", "ебаный", "хуй", "гавно", "ахуеть"]
+        self.glue_words = ["в", "на", "с", "з", "к", "о", "у", "по", "за", "из", "ис", "бес"]
+        self.leet_speak_map = {'ч': '4', 'з': '3', 'а': 'а', 'е': 'е'}
+        self.chaos_symbols = ['\u0300', '\u0301', '\u0302', '\u0303', '\u0304', '\u0305', '\u0306', '\u0307', '\u0308',
+                              '\u0309', '\u030a', '\u030b', '\u030c', '\u030d', '\u030e', '\u030f', '\u0310', '\u0311',
+                              '\u0312', '\u0313', '\u0314', '\u0315', '\u0316', '\u0317', '\u0318', '\u0319', '\u031a',
+                              '\u031b', '\u031c', '\u031d', '\u031e', '\u031f', '\u0320', '\u0321', '\u0322', '\u0323',
+                              '\u0324', '\u0325', '\u0326', '\u0327', '\u0328', '\u0329', '\u032a', '\u032b', '\u032c',
+                              '\u032d', '\u032e', '\u032f', '\u0330', '\u0331', '\u0332', '\u0333', '\u0334', '\u0335',
+                              '\u0336', '\u0337', '\u0338', '\u0339', '\u033a', '\u033b', '\u033c', '\u033d', '\u033e',
+                              '\u033f', '\u0340', '\u0341', '\u0342', '\u0343', '\u0344', '\u0345', '\u0346', '\u0347',
+                              '\u0348', '\u0349', '\u034a', '\u034b', '\u034c', '\u034d', '\u034e', '\u034f', '\u0350',
+                              '\u0351', '\u0352', '\u0353', '\u0354', '\u0355', '\u0356', '\u0357', '\u0358', '\u0359',
+                              '\u035a', '\u035b', '\u035c', '\u035d', '\u035e', '\u035f', '\u0360', '\u0361', '\u0362',
+                              '\u0363', '\u0364', '\u0365', '\u0366', '\u0367', '\u0368', '\u0369', '\u036a', '\u036b',
+                              '\u036c', '\u036d', '\u036e', '\u036f']
+
+    def _copy_to_clipboard(self, label, text):
+        if AndroidUtilities.addToClipboard(text): BulletinHelper.show_info(f"Скапиравал {label} в буфер")
+
+    def _open_plugin_settings(self, java_plugin):
+        try:
+            get_last_fragment().presentFragment(PluginSettingsActivity(java_plugin))
+        except Exception:
+            pass
+
+    def _add_settings_menu_items(self):
+        try:
+            if not self._drawer_settings_item: self._drawer_settings_item = self.add_menu_item(
+                MenuItemData(menu_type=MenuItemType.DRAWER_MENU, text=locali.get_string("SETTINGS_HEADER"),
+                             icon="msg_settings_14", priority=5, on_click=lambda ctx: run_on_ui_thread(
+                        lambda: self._open_plugin_settings(PluginsController.getInstance().plugins.get(self.id)))))
+            if not self._chat_settings_item: self._chat_settings_item = self.add_menu_item(
+                MenuItemData(menu_type=MenuItemType.CHAT_ACTION_MENU, text=locali.get_string("SETTINGS_HEADER"),
+                             icon="msg_settings_14", priority=5, on_click=lambda ctx: run_on_ui_thread(
+                        lambda: self._open_plugin_settings(PluginsController.getInstance().plugins.get(self.id)))))
+        except Exception:
+            pass
+
+    def _remove_settings_menu_items(self):
+        try:
+            if self._drawer_settings_item: self.remove_menu_item(
+                self._drawer_settings_item); self._drawer_settings_item = None
+            if self._chat_settings_item: self.remove_menu_item(
+                self._chat_settings_item); self._chat_settings_item = None
+        except Exception:
+            pass
+
+    def _on_show_settings_buttons_change(self, enabled: bool):
+        run_on_ui_thread(lambda: self._add_settings_menu_items() if enabled else self._remove_settings_menu_items())
+
+    def get_probability(self, setting_key, default_index=1):
+        frequency = self.get_setting(setting_key, default_index)
+        if frequency == 0: return 0.25
+        if frequency == 2: return 0.75
+        if frequency == 3: return 1.0
+        return 0.5
+
+    def create_settings(self):
+        intensity_items = [locali.get_string("INTENSITY_LOW"), locali.get_string("INTENSITY_MEDIUM"),
+                           locali.get_string("INTENSITY_HIGH"), locali.get_string("INTENSITY_MAX")]
+        cursing_items = [locali.get_string("CURSE_NONE"), locali.get_string("CURSE_LOW"),
+                         locali.get_string("CURSE_HIGH")]
+        brutality_items = [locali.get_string("BRUTALITY_NONE"), locali.get_string("BRUTALITY_MEDIUM"),
+                           locali.get_string("BRUTALITY_HIGH")]
+        return [Header(text=locali.get_string("SETTINGS_HEADER")),
+                Switch(key="enabled", text=locali.get_string("ENABLE_SWITCH"), icon="msg_language", default=True),
+                Switch(key="show_settings_buttons", text=locali.get_string("SHOW_SETTINGS_BUTTONS"), icon="msg_reorder",
+                       default=True, subtext=locali.get_string("SHOW_SETTINGS_BUTTONS_DESC"),
+                       on_change=self._on_show_settings_buttons_change),
+                Switch(key="ignore_dot_commands", text=locali.get_string("IGNORE_DOT_COMMANDS_SWITCH"),
+                       icon="msg_stories_stealth", default=True),
+                Divider(text=locali.get_string("IGNORE_DOT_COMMANDS_INFO")),
+                Selector(key="padonkizm_intensity", text=locali.get_string("PADONKIZM_INTENSITY"),
+                         items=intensity_items, default=1, icon="msg_stats"), Divider(),
+                Header(text=locali.get_string("ADVANCED_SETTINGS_HEADER")),
+                Selector(key="brutality_level", text=locali.get_string("BRUTALITY_LEVEL"), items=brutality_items,
+                         default=0, icon="msg_flame"), Divider(text=locali.get_string("BRUTALITY_INFO")),
+                Switch(key="word_glue", text=locali.get_string("WORD_GLUE_SWITCH"), default=True, icon="msg_link"),
+                Divider(text=locali.get_string("WORD_GLUE_INFO")),
+                Switch(key="enable_caps_lock", text=locali.get_string("ENABLE_CAPS_LOCK_SWITCH"), default=False,
+                       icon="msg_text"), Divider(text=locali.get_string("CAPS_LOCK_INFO")),
+                Switch(key="replace_punctuation", text=locali.get_string("REPLACE_PUNCTUATION_SWITCH"), default=True,
+                       icon="msg_edit"), Divider(text=locali.get_string("REPLACE_PUNCTUATION_INFO")),
+                Switch(key="add_actions", text=locali.get_string("ADD_ACTIONS_SWITCH"), default=True, icon="msg_add"),
+                Selector(key="actions_frequency", text=locali.get_string("ACTIONS_FREQUENCY"), items=intensity_items,
+                         default=1, icon="msg_forward_replace"), Divider(text=locali.get_string("ACTIONS_INFO")),
+                Selector(key="cursing_level", text=locali.get_string("CURSING_LEVEL"), items=cursing_items, default=0,
+                         icon="msg_block"), Divider(text=locali.get_string("CURSING_LEVEL_INFO")),
+                Divider(text=locali.get_string("INFO_TEXT")), Header(text=locali.get_string("DONATE_HEADER")),
+                Text(text=locali.get_string("DONATE_CRYPTO"), icon="menu_cashtag", accent=True,
+                     on_click=lambda v: run_on_ui_thread(
+                         lambda: self._copy_to_clipboard("крипту", "http://t.me/send?start=IV5BntjEdiMW"))),
+                Text(text=locali.get_string("DONATE_INFO"), icon="msg_info", accent=True,
+                     on_click=lambda v: run_on_ui_thread(
+                         lambda: get_messages_controller().openByUserName("ffs_tmp_info", get_last_fragment(), 1)))]
+
+    def on_plugin_load(self):
+        priority = -100 if self.get_setting("ignore_dot_commands", True) else 200
+        self.add_on_send_message_hook(priority)
+        if self.get_setting("show_settings_buttons", True): self._add_settings_menu_items()
+
+    def on_plugin_unload(self):
+        self._remove_settings_menu_items()
+
+    def on_send_message_hook(self, account, params):
+        original_text = params.message if hasattr(params, 'message') and params.message else (
+            params.caption if hasattr(params, 'caption') and params.caption else None)
+        try:
+            if hasattr(params, 'message') and params.message and params.message.strip().lower() == ".padonki":
+                new_state = not self.get_setting("enabled", True)
+                self.set_setting("enabled", new_state)
+                BulletinHelper.show_info(locali.get_string("ENABLED" if new_state else "DISABLED"))
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if not self.get_setting("enabled", True) or not original_text: return HookResult()
+            if self.get_setting("ignore_dot_commands", True) and original_text.strip().startswith(
+                '.'): return HookResult()
+            modified_text = self.apply_padonki_transformations(original_text)
+            if hasattr(params, 'message') and params.message:
+                params.message = modified_text
+            elif hasattr(params, 'caption') and params.caption:
+                params.caption = modified_text
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+        except Exception:
+            from client_utils import log
+            log(f"Ашыпка в плагине {__name__}:\n{traceback.format_exc()}")
+            error_prefix = locali.get_string("ERROR_MESSAGE_PADONOK")
+            if hasattr(params, 'message') and params.message:
+                params.message = f"{error_prefix}\n\n{original_text}"
+            elif hasattr(params, 'caption') and params.caption:
+                params.caption = f"{error_prefix}\n\n{original_text}"
+            return HookResult(strategy=HookStrategy.MODIFY_FINAL, params=params)
+
+    def apply_padonki_transformations(self, text):
+        prob = self.get_probability("padonkizm_intensity")
+        brutality_level = self.get_setting("brutality_level", 0)
+        brutality_prob = 0 if brutality_level == 0 else (0.4 if brutality_level == 1 else 0.8)
+
+        for pattern, replacement in self.padonki_replacements.items():
+            if random.random() < prob: text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+        words = text.split(' ')
+        processed_words = []
+        i = 0
+        while i < len(words):
+            word = words[i]
+            if not word: i += 1; continue
+            w = word.lower()
+            if self.get_setting("word_glue", True) and w in self.glue_words and i + 1 < len(
+                    words) and random.random() < prob * 0.8:
+                next_word = words[i + 1]
+                if next_word: w = w + next_word.lower(); i += 1
+
+            if random.random() < prob:
+                if random.random() < 0.8: w = re.sub(r'тся\b|ться\b', 'цца', w)
+                if random.random() < 0.9: w = w.replace('жи', 'жы').replace('ши', 'шы')
+                if random.random() < 0.7: w = w.replace('ча', 'чя').replace('ща', 'щя')
+                if random.random() < 0.6: w = w.replace('чн', 'шн')
+                if random.random() < 0.5: w = re.sub(r'сч|зч', 'щ', w)
+                if random.random() < 0.5: w = re.sub(r'тс', 'ц', w)
+                if random.random() < 0.7 and w.endswith('в'):
+                    w = w[:-1] + 'ф'
+                elif random.random() < 0.7 and w.endswith('ф'):
+                    w = w[:-1] + 'в'
+                if random.random() < 0.7: w = re.sub(r'([бвгджзклмнпрстфхцчшщ])ь\b', r'\1', w)
+                if random.random() < 0.5: w = re.sub(r'(ый|ий)\b', 'ой', w)
+                if random.random() < 0.8: w = w.replace('е', 'и')
+
+            if random.random() < prob * 0.8 and 'о' in w and len(w) > 3:
+                temp_w = list(w)
+                indices = [j for j, char in enumerate(temp_w) if char == 'о']
+                if indices:
+                    if indices[0] == 0 and len(w) > 1 and random.random() < 0.5: indices.pop(0)
+                    if indices:
+                        for j in random.sample(indices, k=random.randint(1, len(indices))): temp_w[j] = 'а'
+                        w = "".join(temp_w)
+
+            if random.random() < prob * 0.4:
+                if 'ф' in w: w = w.replace('ф', 'фф', 1)
+                if 'с' in w and not w.endswith('сс'): w = re.sub(r'с(\b|[^с])', r'сс\1', w, 1)
+
+            if random.random() < brutality_prob:
+                if random.random() < 0.6:
+                    for char, replacement in self.leet_speak_map.items():
+                        if char in w: w = w.replace(char, replacement)
+                if len(w) > 3 and random.random() < 0.3:
+                    idx = random.randint(1, len(w) - 2)
+                    w_list = list(w)
+                    w_list[idx], w_list[idx + 1] = w_list[idx + 1], w_list[idx]
+                    w = "".join(w_list)
+                if len(w) > 4 and random.random() < 0.2:
+                    idx = random.randint(1, len(w) - 1)
+                    w = w[:idx] + random.choice('хъь') + w[idx:]
+                if random.random() < 0.25:
+                    w_list = list(w)
+                    for j in range(len(w_list)):
+                        if random.random() < 0.3: w_list[j] += random.choice(self.chaos_symbols)
+                    w = "".join(w_list)
+
+            processed_words.append(w)
+            i += 1
+
+        processed_text = " ".join(processed_words)
+        cursing_level = self.get_setting("cursing_level", 0)
+        if cursing_level > 0 and random.random() < (0.2 if cursing_level == 1 else 0.5):
+            words_list = processed_text.split();
+            if len(words_list) > 1:
+                insert_pos = random.randint(1, len(words_list) - 1)
+                words_list.insert(insert_pos, random.choice(self.bad_words))
+                processed_text = " ".join(words_list)
+
+        if self.get_setting("replace_punctuation", True) and random.random() < prob:
+            processed_text = processed_text.replace(',', '')
+            processed_text = re.sub(r'\?+',
+                                    lambda m: random.choice(['?', '??', '?!', '???', '?!!1', '???адин', '??77']),
+                                    processed_text)
+            processed_text = re.sub(r'\!+',
+                                    lambda m: random.choice(['!', '!!', '!!!1', '!!1адин', '!!!11адинадин', '!!!!111']),
+                                    processed_text)
+            processed_text = re.sub(r'\.(?!\.)', lambda m: random.choice(
+                [')' * random.randint(2, 7), '.)', '.жпг', '.gif', '!!1', ')))0)']), processed_text)
+
+        if self.get_setting("add_actions", True) and random.random() < self.get_probability("actions_frequency"):
+            processed_text = f"{processed_text.strip()} {random.choice(self.padonki_actions)}"
+        if self.get_setting("enable_caps_lock", False) and random.random() < prob * 1.2:
+            processed_text = processed_text.upper()
+
+        return processed_text.strip()
+
+# FROM PADONOK FOR PADONKI
